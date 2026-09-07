@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
 
 @dataclass(frozen=True)
@@ -191,6 +191,19 @@ class DashboardAuthProvider(ABC):
     # token-only credential (e.g. drain) is never offered a login. Mirrors
     # supports_token.
     supports_session: bool = True
+    # Direct request providers are authoritative on protected HTTP routes.
+    supports_request_identity: bool = False
+    # Direct providers must set the exact public origin and host they accept.
+    request_identity_origin: str = ""
+    request_identity_host: str = ""
+
+    def verify_request_identity(self, *, headers: Mapping[str, str]) -> Optional[Session]:
+        """Return a verified proxy-authenticated Session, or None."""
+        return None
+
+    def logout_redirect(self) -> Optional[str]:
+        """Return a direct-provider logout path, if any."""
+        return None
 
     @abstractmethod
     def start_login(self, *, redirect_uri: str) -> LoginStart: ...

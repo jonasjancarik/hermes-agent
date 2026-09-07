@@ -17,12 +17,16 @@ binds.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Awaitable, Callable
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
-from hermes_cli.dashboard_auth import list_session_providers
+from hermes_cli.dashboard_auth import (
+    list_request_identity_providers,
+    list_session_providers,
+)
 from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
 from hermes_cli.dashboard_auth.base import (
     DashboardAuthProvider,
@@ -91,6 +95,50 @@ def _client_ip(request: Request) -> str:
     if fwd:
         return fwd.split(",")[0].strip()
     return request.client.host if request.client else ""
+
+
+def _direct_identity_response(request: Request) -> Response:
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {
+                "error": "unauthenticated",
+                "detail": "Proxy authentication is required",
+                "reason": "missing_or_invalid_proxy_assertion",
+                "login_url": "/cdn-cgi/access/logout",
+            },
+            status_code=401,
+        )
+    return RedirectResponse(url="/cdn-cgi/access/logout", status_code=302)
+
+
+def _direct_origin_allowed(request: Request, providers) -> bool:
+    if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return True
+    origin = request.headers.get("origin", "")
+    return bool(origin) and any(
+        expected_origin and origin == expected_origin
+        for expected_origin in (
+            getattr(provider, "request_identity_origin", "") for provider in providers
+        )
+    )
+
+
+def _direct_host_allowed(request: Request, provider) -> bool:
+    expected_host = getattr(provider, "request_identity_host", "")
+    return bool(expected_host) and request.headers.get("host", "").lower() == expected_host
+
+
+def _verify_direct_request_identity(request: Request):
+    providers = list_request_identity_providers()
+    if not providers:
+        if os.environ.get("HERMES_CLOUDFLARE_ACCESS_DIRECT", "").strip() == "1":
+            raise ProviderError("direct proxy identity provider is not registered")
+        return None, None, False
+    for provider in providers:
+        session = provider.verify_request_identity(headers=request.headers)
+        if session is not None:
+            return session, provider, True
+    return None, None, True
 
 
 def _ordered_session_providers(
@@ -336,10 +384,37 @@ async def gated_auth_middleware(
     # on a registered token route) carries ``token_authenticated`` — it is NOT
     # a cookie session and must not be bounced to /login. Pass it through; the
     # seam already attached ``request.state.token_principal``.
-    if getattr(request.state, "token_authenticated", False):
+    if (
+        getattr(request.state, "token_authenticated", False)
+        and not list_request_identity_providers()
+        and os.environ.get("HERMES_CLOUDFLARE_ACCESS_DIRECT", "").strip() != "1"
+    ):
         return await call_next(request)
 
     path = request.url.path
+    direct_providers = list_request_identity_providers()
+    direct_mode_requested = bool(direct_providers) or os.environ.get(
+        "HERMES_CLOUDFLARE_ACCESS_DIRECT", ""
+    ).strip() == "1"
+    if _path_is_public(path) and path not in {"/login", "/auth/logout"}:
+        return await call_next(request)
+    if path == "/auth/logout":
+        if direct_mode_requested and not _direct_origin_allowed(request, direct_providers):
+            return JSONResponse({"detail": "Cross-origin write rejected"}, status_code=403)
+        return await call_next(request)
+    try:
+        direct_session, direct_provider, direct_enabled = _verify_direct_request_identity(request)
+    except ProviderError:
+        return JSONResponse({"detail": "Proxy identity verifier unavailable"}, status_code=503)
+    if direct_session is not None:
+        request.state.session = direct_session
+        if not _direct_host_allowed(request, direct_provider):
+            return JSONResponse({"detail": "Unexpected Host"}, status_code=403)
+        if not _direct_origin_allowed(request, [direct_provider]):
+            return JSONResponse({"detail": "Cross-origin write rejected"}, status_code=403)
+        return await call_next(request)
+    if direct_enabled and not _path_is_public(path):
+        return _direct_identity_response(request)
     if _path_is_public(path):
         return await call_next(request)
 

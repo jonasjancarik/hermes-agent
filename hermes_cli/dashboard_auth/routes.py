@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from hermes_cli.dashboard_auth import (
     get_provider,
     list_providers,
+    list_request_identity_providers,
     list_session_providers,
 )
 from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
@@ -139,6 +140,10 @@ async def login_page(request: Request) -> HTMLResponse:
     next_path = _validate_post_login_target(
         request.query_params.get("next", "")
     )
+    if list_request_identity_providers():
+        if getattr(request.state, "session", None) is not None:
+            return RedirectResponse(url=next_path or f"{_prefix(request)}/chat", status_code=302)
+        return RedirectResponse(url="/cdn-cgi/access/logout", status_code=302)
     return HTMLResponse(
         render_login_html(next_path=next_path),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
@@ -897,7 +902,15 @@ async def auth_logout(request: Request):
     )
 
     prefix = _prefix(request)
-    resp = RedirectResponse(url=f"{prefix}/login", status_code=302)
+    logout_url = next(
+        (
+            provider.logout_redirect()
+            for provider in list_request_identity_providers()
+            if provider.logout_redirect()
+        ),
+        f"{prefix}/login",
+    )
+    resp = RedirectResponse(url=logout_url, status_code=302)
     clear_session_cookies(resp, prefix=prefix)
     clear_pkce_cookie(resp, use_https=detect_https(request), prefix=prefix)
     return resp

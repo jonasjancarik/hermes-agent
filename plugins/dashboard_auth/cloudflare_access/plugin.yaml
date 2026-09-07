@@ -1,0 +1,26 @@
+name: cloudflare-access
+version: 1.0.0
+description: "Direct Cloudflare Access assertion authentication for the Hermes dashboard."
+author: "Personal integration"
+kind: backend
+manifest_version: 2
+config_schema:
+  enabled:
+    type: bool
+    default: false
+    description: "Enable direct Cloudflare Access request authentication."
+  team_domain:
+    type: str
+    default: ""
+    description: "Cloudflare Access team HTTPS origin."
+    required: true
+  audience:
+    type: str
+    default: ""
+    description: "Cloudflare Access application audience claim."
+    required: true
+  public_origin:
+    type: str
+    default: ""
+    description: "Exact public dashboard HTTPS origin."
+    required: true
