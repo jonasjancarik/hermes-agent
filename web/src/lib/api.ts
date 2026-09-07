@@ -362,17 +362,19 @@ export const api = {
     fetchJSON<AuthMeResponse>("/api/auth/me", undefined, {
       allowUnauthorized: true,
     }),
-  logout: () =>
-    fetch(`${BASE}/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-    }).then((r) => {
-      // /auth/logout returns 302 → /login. Follow that with a full-page
-      // navigation rather than letting fetch() opaquely consume the
-      // redirect — the SPA needs to leave the protected area.
-      window.location.assign("/login");
-      return r;
-    }),
+  logout: () => {
+    // A native same-origin form navigation follows the provider's logout
+    // redirect. `fetch` cannot do that safely when the provider ends its
+    // session on another origin.
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = `${BASE}/auth/logout`;
+    form.style.display = "none";
+    document.body.appendChild(form);
+    form.submit();
+    // The document is navigating; callers must not race it with /login.
+    return new Promise<never>(() => {});
+  },
   getSessions: (
     limit = 20,
     offset = 0,
