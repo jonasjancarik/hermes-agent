@@ -1,0 +1,20 @@
+# Runtime dependencies match the release this downstream branch is based on.
+# When merging another release, update this digest together with its lockfiles.
+FROM nousresearch/hermes-agent@sha256:99641e57ec762c59e54cb44aa6746b7fc68c18b3c5ddb088af54234c613d9294
+USER root
+ARG FORK_REVISION
+LABEL org.opencontainers.image.source="https://github.com/jonasjancarik/hermes-agent" \
+      org.opencontainers.image.revision=$FORK_REVISION
+WORKDIR /opt/hermes
+# Native source from the fork; no string replacement or runtime patch installer.
+# The upstream .dockerignore excludes credentials, local data, Git and tests.
+COPY . /opt/hermes
+RUN printf '%s' "$FORK_REVISION" | grep -Eq '^[0-9a-f]{40}$' \
+ && printf '%s\n' "$FORK_REVISION" > /opt/hermes/.fork-revision \
+ && cd /opt/hermes/scripts/whatsapp-bridge && npm ci --ignore-scripts \
+ && sha256sum package.json | cut -c1-16 > node_modules/.hermes-pkg-hash \
+ && cd /opt/hermes/web && npm run build \
+ && test -f /opt/hermes/hermes_cli/web_dist/index.html \
+ && (getent group 1000 >/dev/null || groupadd --gid 1000 hermes-runtime) \
+ && (getent passwd 1000 >/dev/null || useradd --uid 1000 --gid 1000 --home-dir /opt/data --no-create-home --shell /bin/sh hermes-runtime)
+USER 1000:1000
