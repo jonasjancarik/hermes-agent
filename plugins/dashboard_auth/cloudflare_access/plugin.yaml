@@ -1,0 +1,10 @@
+name: cloudflare-access
+version: 1.0.0
+description: "Direct Cloudflare Access assertion authentication for the Hermes dashboard."
+author: jonasjancarik
+kind: backend
+requires_env:
+  - HERMES_CLOUDFLARE_ACCESS_DIRECT
+  - HERMES_CLOUDFLARE_ACCESS_TEAM_DOMAIN
+  - HERMES_CLOUDFLARE_ACCESS_AUD
+  - HERMES_DASHBOARD_PUBLIC_URL

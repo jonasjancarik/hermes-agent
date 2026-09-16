@@ -10,6 +10,7 @@ redirected to ``/login``; ``/api/*`` routes get a 401 JSON envelope.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Awaitable, Callable
 from urllib.parse import quote
 
@@ -17,7 +18,10 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from hermes_cli.dashboard_auth import list_session_providers
+from hermes_cli.dashboard_auth import (
+    list_request_identity_providers,
+    list_session_providers,
+)
 from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
 from hermes_cli.dashboard_auth.base import ProviderError
 from hermes_cli.dashboard_auth.cookies import (
@@ -107,6 +111,77 @@ def _auto_sso_response(request: Request) -> Response | None:
     return resp
 
 
+def _direct_identity_response(request: Request) -> Response:
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": "unauthenticated", "detail": "Cloudflare Access authentication is required", "reason": "missing_or_invalid_cloudflare_access_assertion", "login_url": "/cdn-cgi/access/logout"}, status_code=401)
+    return RedirectResponse(url="/cdn-cgi/access/logout", status_code=302)
+
+
+_DIRECT_PUBLIC_PREFIXES: tuple[str, ...] = (
+    "/api/mcp/oauth/callback/", "/assets/", "/ds-assets/", "/fonts/",
+    "/fonts-terminal/")
+_DIRECT_PUBLIC_EXACT: frozenset[str] = frozenset({"/favicon.ico"})
+
+
+def _direct_path_is_public(path: str) -> bool:
+    """Public liveness/static routes kept outside direct Access identity checks.
+
+    Do not reuse the interactive auth bootstrap allowlist: it permits prefix-matched
+    OAuth/cookie routes that direct Access deliberately disables.
+    """
+    return path in PUBLIC_API_PATHS or path in _DIRECT_PUBLIC_EXACT or any(
+        path == prefix or path.startswith(prefix) for prefix in _DIRECT_PUBLIC_PREFIXES)
+
+
+def _direct_target(provider) -> tuple[str, str] | None:
+    target = provider.request_identity_target()
+    if not isinstance(target, tuple) or len(target) != 2:
+        return None
+    origin, host = target
+    if not isinstance(origin, str) or not isinstance(host, str) or not origin or not host:
+        return None
+    return origin, host
+
+
+def _direct_origin_allowed(request: Request, provider) -> bool:
+    if request.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return True
+    target = _direct_target(provider)
+    return target is not None and request.headers.get("origin", "") == target[0]
+
+
+def _direct_origin_response() -> Response:
+    return JSONResponse({"detail": "Cross-origin write rejected"}, status_code=403)
+
+
+def _direct_host_allowed(request: Request, provider) -> bool:
+    target = _direct_target(provider)
+    return target is not None and request.headers.get("host", "").lower() == target[1].lower()
+
+
+def _logout_direct_provider():
+    """Return the only configured direct target; ambiguous config fails closed."""
+    targets = {}
+    for provider in list_request_identity_providers():
+        target = _direct_target(provider)
+        if target is not None:
+            targets[target] = provider
+    return next(iter(targets.values())) if len(targets) == 1 else None
+
+
+def _verify_direct_request_identity(request: Request):
+    providers = list_request_identity_providers()
+    if not providers:
+        if os.environ.get("HERMES_CLOUDFLARE_ACCESS_DIRECT", "").strip() == "1":
+            raise ProviderError("direct Cloudflare Access provider is not registered")
+        return None, None, False
+    for provider in providers:
+        session = provider.verify_request_identity(headers=request.headers)
+        if session is not None:
+            return session, provider, True
+    return None, None, True
+
+
 def _verify_access_token(
     request: Request, *, access_token: str, provider_hint: str | None = None, audit: bool = True):
     """Run ``verify_session`` across the provider stack; Session or ``None``. ``audit=False`` is
@@ -152,10 +227,39 @@ async def gated_auth_middleware(
     """Engaged only when ``app.state.auth_required is True``."""
     if not getattr(request.app.state, "auth_required", False):
         return await call_next(request)
-    # Already authenticated by the token-auth seam (service caller on a registered token
-    # route): not a cookie session, must not bounce to /login.
-    if getattr(request.state, "token_authenticated", False) or _path_is_public(request.url.path):
+    path = request.url.path
+    if _direct_path_is_public(path):
         return await call_next(request)
+    if path == "/auth/logout":
+        if os.environ.get("HERMES_CLOUDFLARE_ACCESS_DIRECT", "").strip() == "1":
+            provider = _logout_direct_provider()
+            if provider is None:
+                return JSONResponse({"detail": "Cloudflare Access verifier unavailable"}, status_code=503)
+            if not _direct_origin_allowed(request, provider):
+                return _direct_origin_response()
+        return await call_next(request)
+    try:
+        direct_session, direct_provider, direct_enabled = _verify_direct_request_identity(request)
+    except ProviderError:
+        return JSONResponse({"detail": "Cloudflare Access verifier unavailable"}, status_code=503)
+    if direct_session is not None:
+        request.state.session = direct_session
+        if not _direct_host_allowed(request, direct_provider):
+            return JSONResponse({"detail": "Unexpected Host"}, status_code=403)
+        if not _direct_origin_allowed(request, direct_provider):
+            return _direct_origin_response()
+        return await call_next(request)
+    if direct_enabled:
+        return _direct_identity_response(request)
+    if _path_is_public(path):
+        return await call_next(request)
+
+    # Already authenticated by the token-auth seam (service caller on a registered token
+    # route): not a cookie session, must not bounce to /login. Direct Access remains
+    # authoritative even if an outer token-auth seam set this flag.
+    if getattr(request.state, "token_authenticated", False):
+        return await call_next(request)
+
     # RFC 8252 native-app bearer path: the same provider-minted access token the cookie flow
     # stores, verified with the same provider stack, no cookie read or set. A presented-but-
     # invalid bearer gets the structured 401 so the desktop refreshes/re-logs instead of

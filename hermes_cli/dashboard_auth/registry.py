@@ -93,6 +93,11 @@ def list_session_providers() -> List[DashboardAuthProvider]:
     return [p for p in list_providers() if getattr(p, "supports_session", True)]
 
 
+def list_request_identity_providers() -> List[DashboardAuthProvider]:
+    """Providers that verify trusted request assertions instead of cookies."""
+    return [p for p in list_providers() if getattr(p, "supports_request_identity", False)]
+
+
 def register_global_provider(provider: DashboardAuthProvider) -> None:
     """Register a host-owned provider in the process-global slot (upsert). The registry is shared
     across every profile one dashboard process serves, so these outlive any per-home plugin

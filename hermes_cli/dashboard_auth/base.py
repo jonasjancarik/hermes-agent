@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional
 
 
 @dataclass(frozen=True)
@@ -111,6 +111,25 @@ class DashboardAuthProvider(ABC):
     supports_password: bool = False
     supports_token: bool = False
     supports_session: bool = True
+    # Direct request providers are authoritative on protected HTTP routes.
+    supports_request_identity: bool = False
+
+    def verify_request_identity(self, *, headers: Mapping[str, str]) -> Optional[Session]:
+        """Return a verified proxy-authenticated session, or ``None``."""
+        return None
+
+    def request_identity_target(self) -> Optional[tuple[str, str]]:
+        """Return the exact ``(Origin, Host)`` allowed for direct requests.
+
+        Direct request providers use this to bind state-changing requests and
+        the Host header to the dashboard target they were configured for.
+        ``None`` makes the direct-request provider unavailable.
+        """
+        return None
+
+    def logout_redirect(self) -> Optional[str]:
+        """Return a direct-provider logout path, if any."""
+        return None
 
     @abstractmethod
     def start_login(self, *, redirect_uri: str) -> LoginStart: ...

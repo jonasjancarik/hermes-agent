@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from hermes_cli.dashboard_auth import (
-    get_provider, list_providers, list_session_providers, native_flow)
+    get_provider, list_providers, list_request_identity_providers, list_session_providers, native_flow)
 from hermes_cli.dashboard_auth import prefix as _prefix_mod
 from hermes_cli.dashboard_auth.audit import AuditEvent, audit_log
 from hermes_cli.dashboard_auth.base import (
@@ -177,7 +177,12 @@ def _start_upstream_login(request: Request, p, *, audit_failure: bool, extra_pkc
 async def login_page(request: Request) -> HTMLResponse:
     # ``next=`` is set by the gate's redirect but /login is reachable directly.
     next_path = _validate_post_login_target(request.query_params.get("next", ""))
-    return HTMLResponse(render_login_html(next_path=next_path), headers=_NO_STORE)
+    if list_request_identity_providers():
+        if getattr(request.state, "session", None) is not None:
+            return RedirectResponse(url=next_path or f"{_prefix(request)}/chat", status_code=302)
+        return RedirectResponse(url="/cdn-cgi/access/logout", status_code=302)
+    return HTMLResponse(render_login_html(
+next_path=next_path), headers=_NO_STORE)
 
 
 @router.get("/api/auth/providers", name="auth_providers")
@@ -431,7 +436,8 @@ async def auth_logout(request: Request):
     _audit(request, AuditEvent.LOGOUT, provider=(sess.provider if sess else "unknown"),
            user_id=(sess.user_id if sess else ""))
     prefix = _prefix(request)
-    resp = RedirectResponse(url=f"{prefix}/login", status_code=302)
+    logout_url = next((p.logout_redirect() for p in list_request_identity_providers() if p.logout_redirect()), f"{prefix}/login")
+    resp = RedirectResponse(url=logout_url, status_code=302)
     clear_session_cookies(resp, prefix=prefix)
     clear_pkce_cookie(resp, use_https=detect_https(request), prefix=prefix)
     return resp
