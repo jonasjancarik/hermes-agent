@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {isBridgeIncomingAllowed} from './incoming_policy.js';
+const group='100000000000000001@g.us';
+const base={isGroup:true,chatId:group,senderId:'100000000001@lid',groupPolicy:'allowlist',dmPolicy:'disabled',allowedGroups:new Set([group]),allowedUsers:new Set(),matches:(id,list)=>list.has(id)};
+assert.equal(isBridgeIncomingAllowed(base),true,'allowed group must not use empty DM allowlist');
+assert.equal(isBridgeIncomingAllowed({...base,chatId:'other@g.us'}),false);
+assert.equal(isBridgeIncomingAllowed({...base,isGroup:false}),false,'DMs stay disabled');
+assert.equal(isBridgeIncomingAllowed({...base,groupPolicy:'disabled'}),false);
+assert.equal(isBridgeIncomingAllowed({...base,groupPolicy:'pairing'}),false);
+assert.equal(isBridgeIncomingAllowed({...base,isGroup:false,dmPolicy:'allowlist'}),false);
+assert.equal(isBridgeIncomingAllowed({...base,isGroup:false,dmPolicy:'allowlist',allowedUsers:new Set([base.senderId])}),true);
+console.log('PASS: allowed group with empty DM list, other groups denied, DM policy preserved');

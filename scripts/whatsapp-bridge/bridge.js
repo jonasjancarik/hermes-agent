@@ -31,6 +31,7 @@ import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import qrcode from 'qrcode-terminal';
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+import { isBridgeIncomingAllowed } from './incoming_policy.js';
 import { createOutboundIdTracker } from './outbound_ids.js';
 import { classifyOwnerMessageGate } from './owner_message_gate.js';
 import {
@@ -115,6 +116,8 @@ const PAIR_JSON = args.includes('--pair-json');
 const WHATSAPP_MODE = getArg('mode', process.env.WHATSAPP_MODE || 'self-chat'); // "bot" or "self-chat"
 const WHATSAPP_DM_POLICY = String(process.env.WHATSAPP_DM_POLICY || 'open').trim().toLowerCase();
 const ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_ALLOWED_USERS || '');
+const GROUP_POLICY = String(process.env.WHATSAPP_GROUP_POLICY || 'disabled').trim().toLowerCase();
+const GROUP_ALLOWED_USERS = parseAllowedUsers(process.env.WHATSAPP_GROUP_ALLOWED_USERS || process.env.WHATSAPP_GROUP_ALLOW_FROM || '');
 const DEFAULT_REPLY_PREFIX = '☤ *Hermes Agent*\n────────────\n';
 const REPLY_PREFIX = process.env.WHATSAPP_REPLY_PREFIX === undefined
   ? DEFAULT_REPLY_PREFIX
@@ -630,7 +633,7 @@ async function startSocket() {
           } catch {}
           continue;
         }
-        if (WHATSAPP_DM_POLICY !== 'pairing' && !matchesAllowedUser(senderId, ALLOWED_USERS, SESSION_DIR)) {
+        if (!isBridgeIncomingAllowed({isGroup, chatId, senderId, groupPolicy: GROUP_POLICY, dmPolicy: WHATSAPP_DM_POLICY, allowedGroups: GROUP_ALLOWED_USERS, allowedUsers: ALLOWED_USERS, matches: (id, list) => matchesAllowedUser(id, list, SESSION_DIR)})) {
           try {
             console.log(JSON.stringify({
               event: 'ignored',
@@ -1130,7 +1133,9 @@ if (PAIR_ONLY) {
   app.listen(PORT, '127.0.0.1', () => {
     console.log(`🌉 WhatsApp bridge listening on port ${PORT} (mode: ${WHATSAPP_MODE})`);
     console.log(`📁 Session stored in: ${SESSION_DIR}`);
-    if (ALLOWED_USERS.size > 0) {
+    if (GROUP_POLICY === 'allowlist' && GROUP_ALLOWED_USERS.size > 0) {
+      console.log(`Allowed groups: ${Array.from(GROUP_ALLOWED_USERS).join(', ')}; DM policy: ${WHATSAPP_DM_POLICY}`);
+    } else if (ALLOWED_USERS.size > 0) {
       console.log(`🔒 Allowed users: ${Array.from(ALLOWED_USERS).join(', ')}`);
     } else if (WHATSAPP_MODE === 'self-chat') {
       console.log(`🔒 Self-chat mode — only your own messages to yourself are processed.`);
