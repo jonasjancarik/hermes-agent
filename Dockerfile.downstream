@@ -1,6 +1,6 @@
 # Runtime dependencies match the release this downstream branch is based on.
 # When merging another release, update this digest together with its lockfiles.
-FROM nousresearch/hermes-agent@sha256:99641e57ec762c59e54cb44aa6746b7fc68c18b3c5ddb088af54234c613d9294
+FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
 USER root
 ARG FORK_REVISION
 LABEL org.opencontainers.image.source="https://github.com/jonasjancarik/hermes-agent" \
