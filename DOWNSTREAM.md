@@ -41,3 +41,8 @@ not automatically updated. Preserve WhatsApp pairing data when updating it.
 OAuth access-token expiry is normal. The recovery fix adopts only tokens belonging
 to the same persistent credential row and rejects a different row, including one
 selected concurrently. An actually revoked refresh token still needs reauthentication.
+
+WhatsApp group turns may intentionally end with `NO_REPLY` without a visible
+warning, including queued follow-ups. Direct messages retain the upstream
+unexpected-silence warning. Validate with
+`scripts/run_tests.sh tests/gateway/test_gateway_silence_tokens.py`.

@@ -311,3 +311,33 @@ async def test_agent_end_hook_includes_model_and_provider(monkeypatch, tmp_path)
     )
     assert end_context["model"] == "gpt-5.6-terra"
     assert end_context["provider"] == "openai-codex"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("chat_type, silent", [("group", True), ("dm", False)])
+async def test_whatsapp_group_chatter_can_remain_silent(monkeypatch, tmp_path, chat_type, silent):
+    runner = _runner(monkeypatch, tmp_path)
+    source = SessionSource(platform=Platform.WHATSAPP, chat_id="test-chat", chat_type=chat_type)
+    event = MessageEvent(text="side chatter", source=source, message_id="msg-42")
+    runner._run_agent = AsyncMock(return_value={
+        "final_response": "NO_REPLY", "messages": [], "tools": [],
+        "history_offset": 0, "last_prompt_tokens": 0, "api_calls": 1, "failed": False,
+    })
+    response = await runner._handle_message_with_agent(event, source, "test-session", 1)
+    assert (response == "") is silent
+
+
+@pytest.mark.asyncio
+async def test_queued_whatsapp_group_silence_is_not_delivered():
+    runner = gateway_run.GatewayRunner(GatewayConfig())
+    runner._deliver_queued_first_response = AsyncMock()
+    turn_ctx = SimpleNamespace(
+        session_key="test-session", stream_consumer_holder=[None],
+        mute_notification_reply=False, persist_user_display_kind=None,
+        source=SessionSource(platform=Platform.WHATSAPP, chat_id="test-chat", chat_type="group"),
+        _status_thread_metadata=None, event_message_id=None,
+        inbound_message_id="msg-42", run_generation=1,
+    )
+    result = {"final_response": "NO_REPLY", "failed": False}
+    await runner._run_agent_deliver_first_response(turn_ctx, None, result, result, None)
+    runner._deliver_queued_first_response.assert_not_awaited()
