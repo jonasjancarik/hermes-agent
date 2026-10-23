@@ -46,3 +46,11 @@ WhatsApp group turns may intentionally end with `NO_REPLY` without a visible
 warning, including queued follow-ups. Direct messages retain the upstream
 unexpected-silence warning. Validate with
 `scripts/run_tests.sh tests/gateway/test_gateway_silence_tokens.py`.
+
+Security runtime refresh (23 October 2026): the downstream image retains
+Hermes 0.21.5 and all application lockfiles, with explicit image-only overrides
+for Pillow 13.0.0, certifi 2026.10.19, uv 0.13.4 and Node 26.12.1. Node and uv
+are pinned to linux/amd64 manifests; this production build targets mbxp amd64.
+The OS CA package is refreshed during the build. Future upstream base changes
+must preserve or supersede these patched versions; ordinary `uv sync --locked`
+can restore older packages, so do not run it in the deployed image.

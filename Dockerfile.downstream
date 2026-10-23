@@ -1,7 +1,21 @@
+# Security runtime refresh, pinned to verified linux/amd64 manifests.
+FROM node:26.12.1-bookworm-slim@sha256:1884ec272c7c06aba7696262fb822dc602f8fa5eb978d03617d6bfe487d7ebac AS security-node
+FROM ghcr.io/astral-sh/uv:0.13.4@sha256:f0a9c230906ab004ce4786b6e0c60995e30b2bdf585c51377026838573720993 AS security-uv
 # Runtime dependencies match the release this downstream branch is based on.
 # When merging another release, update this digest together with its lockfiles.
 FROM nousresearch/hermes-agent@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
 USER root
+
+# Keep the application release and its other dependencies unchanged.
+COPY --from=security-node /usr/local/bin/node /usr/local/bin/node
+COPY --from=security-uv /uv /uvx /usr/local/bin/
+RUN apt-get update && apt-get install -y --only-upgrade ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && uv pip install --python /opt/hermes/.venv/bin/python --no-deps \
+      'Pillow==13.0.0' 'certifi==2026.10.19' \
+ && test "$(node --version)" = v26.12.1 \
+ && uv --version | grep -q '^uv 0.13.4 ' \
+ && /opt/hermes/.venv/bin/python -c "import PIL, certifi; assert PIL.__version__ == '13.0.0'; assert certifi.__version__ == '2026.10.19'"
 ARG FORK_REVISION
 LABEL org.opencontainers.image.source="https://github.com/jonasjancarik/hermes-agent" \
       org.opencontainers.image.revision=$FORK_REVISION
